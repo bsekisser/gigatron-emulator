@@ -16,7 +16,7 @@ OBJS := $(SRCS:.c=.o)
 EXEC := emulate    
 
 # set the compiler flags
-CFLAGS := `sdl2-config --libs --cflags` -ggdb3 -O0 --std=c99 -Wall -lSDL2_image -lSDL2_ttf -lm
+CFLAGS := `sdl2-config --libs --cflags` -ggdb3 -O2 -march=native --std=c99 -Wall -lSDL2_image -lSDL2_ttf -lm
 
 # default recipe
 all: $(EXEC)

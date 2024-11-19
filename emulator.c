@@ -13,6 +13,16 @@
 #define WINDOW_WIDTH (960)
 #define WINDOW_HEIGHT (540)
 
+typedef struct
+{
+    int16_t x, y, left;
+    uint8_t lineBuffer[WINDOW_HEIGHT][WINDOW_WIDTH];
+    uint8_t oldOutput;
+//
+    SDL_Renderer* rend;
+    SDL_Window* win;
+} VgaState;
+
 typedef struct 
 {
     uint16_t PC;
@@ -112,11 +122,65 @@ void garble(uint8_t mem[], unsigned int length)
     }
 }
 
+void VgaCycle(VgaState *const vga, CpuState *const currentState)
+{
+    const uint8_t output = currentState->OUTPUT;
+    const uint8_t oldOutput = vga->oldOutput;
+    vga->oldOutput = output;
+    
+    uint8_t *const linePixel = &vga->lineBuffer[vga->y][vga->x++];
+    const uint8_t pixel = output & 63;
+    
+    int hSync = (output & 0x40) - (oldOutput & 0x40);
+    int vSync = (output & 0x80) - (oldOutput & 0x80);
 
+    if (hSync > 0)
+    {
+        vga->left = vga->x >> 1;
+
+        vga->x = 0;
+        vga->y++;
+
+        currentState->undef = rand() & 0xff;
+    }
+
+    if (vSync < 0 )
+    {
+        vga->y = 0;
+
+        quitRequest = GetQuitRequest();
+        Input = GetInput(Input);
+        DrawGigatronExtendedIO(vga->rend, Input);
+
+        SDL_RenderPresent(vga->rend);
+    }
+
+    if ((0 < vga->y) && (WINDOW_HEIGHT > vga->y)
+        && ((0 < vga->x) && (WINDOW_WIDTH > vga->x)))
+    {
+        if(pixel != linePixel[0])
+        {
+            *linePixel = pixel;
+
+            const int16_t r = (pixel & 3) * 0x55;
+            const int16_t g = ((pixel >> 2) & 3) * 0x55;
+            const int16_t b = ((pixel >> 4) & 3) * 0x55;
+            
+            SDL_SetRenderDrawColor(vga->rend, r, g, b, 255);
+
+            const int16_t x = vga->left + (vga->x << 2);
+            const int16_t y = vga->y;
+
+            SDL_RenderDrawLine(vga->rend, x, y, x + 4, y);
+        }
+    }
+}
 
 int main(int argc, char* argv[])
 {
     CpuState currentState;
+    VgaState vga = { .x = 0, .y = 0, .left = 0 };
+    
     srand(time(NULL));
     garble((void*)ROM, sizeof(ROM));
     garble((void*)RAM, sizeof(RAM));
@@ -132,9 +196,6 @@ int main(int argc, char* argv[])
 
     fread(ROM, 1, sizeof(ROM), fp);
     fclose(fp);
-
-    int vgaX = 0;
-    int vgaY = 0;
     
     // attempt to initialize graphics and timer system
     if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER) != 0)
@@ -143,27 +204,27 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    SDL_Window* win = SDL_CreateWindow("Jalecko's Gigatron Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT,0);
+    vga.win = SDL_CreateWindow("Jalecko's Gigatron Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT,0);
 
-    if (!win)
+    if (!vga.win)
     {
         printf("error creating window: %s\n", SDL_GetError());
-        SDL_Quit();
-	    return 1;
-    }
-
-    // create a renderer, which sets up the graphics hardware
-    Uint32 render_flags = SDL_RENDERER_ACCELERATED;
-    SDL_Renderer* rend = SDL_CreateRenderer(win, -1, render_flags);
-    if (!rend)
-    {
-        printf("error creating renderer: %s\n", SDL_GetError());
-        SDL_DestroyWindow(win);
         SDL_Quit();
         return 1;
     }
 
-    SDL_RenderPresent(rend);
+    // create a renderer, which sets up the graphics hardware
+    Uint32 render_flags = SDL_RENDERER_ACCELERATED;
+    vga.rend = SDL_CreateRenderer(vga.win, -1, render_flags);
+    if (!vga.rend)
+    {
+        printf("error creating renderer: %s\n", SDL_GetError());
+        SDL_DestroyWindow(vga.win);
+        SDL_Quit();
+        return 1;
+    }
+
+    SDL_RenderPresent(vga.rend);
 
     long long t = -2;
     
@@ -173,38 +234,13 @@ int main(int argc, char* argv[])
 
         CpuState newState = CpuCycle(currentState);
 
-        int hSync = (newState.OUTPUT & 0x40) - (currentState.OUTPUT & 0x40);
-        int vSync = (newState.OUTPUT & 0x80) - (currentState.OUTPUT & 0x80);
-
-        if (vSync < 0 )
-        {
-            vgaY = -36;
-
-            quitRequest = GetQuitRequest();
-            Input = GetInput(Input);
-            DrawGigatronExtendedIO(rend, Input);
-
-            SDL_RenderPresent(rend);
-        }
-
-        if (vgaX++ < 172 && vgaX > 12)
-        {
-            uint8_t pixel = (currentState.OUTPUT & 63);
-            SDL_SetRenderDrawColor(rend, (pixel & 0x03) * 0x55, ((pixel >> 2) & 0x03) * 0x55, ((pixel >> 4) & 0x03) * 0x55,255);
-            SDL_RenderDrawLine(rend, 160 + vgaX*4 - 52, vgaY + 30, vgaX*4 + 164 - 52, vgaY + 30);
-        } 
-
-        if (hSync > 0)
-        {
-            vgaX = 0;
-            vgaY++;
-            newState.undef = rand() & 0xff;
-        }
         currentState = newState;
         t++;
+
+        VgaCycle(&vga, &newState);
     }
 
-    SDL_DestroyRenderer(rend);
-    SDL_DestroyWindow(win);
+    SDL_DestroyRenderer(vga.rend);
+    SDL_DestroyWindow(vga.win);
     SDL_Quit();
 }

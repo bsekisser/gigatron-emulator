@@ -58,6 +58,8 @@ uint8_t GetControllerInput()
                 inputDev = GT_KEYBOARD;
                 printf("%s\n","keyboard");
                 break;
+            default:
+				inputByte = 255;
             }
             break;
         case SDL_KEYUP:

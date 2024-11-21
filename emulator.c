@@ -10,6 +10,8 @@
 #include <SDL2/SDL_image.h>
 //#include <SDL2/SDL_ttf.h>
 
+#include "git/libbse/include/log.h"
+
 #define WINDOW_WIDTH (960)
 #define WINDOW_HEIGHT (540)
 
@@ -23,7 +25,7 @@ typedef struct
     SDL_Window* win;
 } VgaState;
 
-typedef struct 
+typedef struct
 {
     uint16_t PC;
     uint8_t IR, D, AC, X, Y, OUTPUT, undef;
@@ -32,21 +34,37 @@ typedef struct
 uint8_t ROM[1<<16][2];  //1 megabit = 128 kilobyte rom data
 uint8_t RAM[1<<15];     //32 kilobyte of ram data
 uint8_t Input = 0xff;   //input from port, normally high
+uint32_t opcode[256];
 
 int quitRequest = 0;
-    
-CpuState CpuCycle(const CpuState newState)
+
+extern inline CpuState CpuCycle(const CpuState newState, uint8_t IR)
 {
     CpuState oldState = newState;
 
-    oldState.IR = ROM[newState.PC][0];
-    oldState.D  = ROM[newState.PC][1];
+//    oldState.IR = ROM[newState.PC][0];
+//	oldldState.IR = IR;
+//    oldState.D  = ROM[newState.PC][1];
 
-    int ins = newState.IR >> 5;
-    int mod = (newState.IR >> 2) & 7;
-    int bus = newState.IR & 3;
+	if(0) {
+		LOG_START("PC: 0x%04x", newState.PC);
+			_LOG_(", IR: 0x%02x(0x%02x)", oldState.IR, newState.IR);
+		LOG_END(", D: 0x%02x", oldState.D);
+	}
+
+    int ins = IR >> 5;
+    int mod = (IR >> 2) & 7;
+    int bus = IR & 3;
     int W = (ins == 6);
     int J = (ins == 7);
+
+	if(0) {
+		LOG_START("ins: %i", ins);
+			_LOG_(", mod: %i", mod);
+			_LOG_(", bus: %i", bus);
+			_LOG_(", W: %i", W);
+		LOG_END(", J: %i", J);
+	}
 
     uint8_t lo = newState.D;
     uint8_t hi = 0;
@@ -108,10 +126,52 @@ CpuState CpuCycle(const CpuState newState)
             int cond = (newState.AC >> 7) + 2*(newState.AC == 0);
             if (mod & (1 << cond))
                 oldState.PC = (newState.PC & 0xff00) | B;
-        } else 
+        } else
             oldState.PC = (newState.Y << 8) | B;
     }
     return oldState;
+}
+
+extern inline void ora_5da(const CpuState *const oldState, CpuState *const newState)
+{ *newState = CpuCycle(*oldState, 0x5d); }
+
+extern inline void ora_5db(const CpuState *const oldState, CpuState *const newState)
+{
+	const uint16_t address = (((uint16_t)oldState->Y) << 8) | oldState->X;
+	newState->OUTPUT = oldState->AC | RAM[address & 0x7fff];
+	newState->X++;
+	newState->PC++;
+}
+
+extern inline void st_c2(const CpuState *const oldState, CpuState *const newState)
+{
+}
+
+CpuState CpuCycleStep(const CpuState oldState)
+{
+//	int log = 0;
+	CpuState newState = oldState;
+
+	uint8_t IR = oldState.IR;
+
+    newState.D  = ROM[oldState.PC][1];
+    newState.IR = ROM[oldState.PC][0];
+
+	opcode[IR]++;
+
+	switch(IR) {
+/*		case 0x5d: // 010-ora 111-[yx++],out 01-ram
+			ora_5da(&oldState, &newState);			
+			break;
+		case 0xc2: // 110-st 000-[d],ac 10-ac
+			RAM[oldState.D] = oldState.AC;
+			newState.PC = oldState.PC + 1;
+			break;
+*/		default:
+			return(CpuCycle(oldState, IR));
+	}
+
+	return(newState);
 }
 
 void garble(uint8_t mem[], unsigned int length)
@@ -127,10 +187,10 @@ void VgaCycle(VgaState *const vga, CpuState *const currentState)
     const uint8_t output = currentState->OUTPUT;
     const uint8_t oldOutput = vga->oldOutput;
     vga->oldOutput = output;
-    
+
     uint8_t *const linePixel = &vga->lineBuffer[vga->y][vga->x++];
     const uint8_t pixel = output & 63;
-    
+
     int hSync = (output & 0x40) - (oldOutput & 0x40);
     int vSync = (output & 0x80) - (oldOutput & 0x80);
 
@@ -165,7 +225,7 @@ void VgaCycle(VgaState *const vga, CpuState *const currentState)
             const int16_t r = (pixel & 3) * 0x55;
             const int16_t g = ((pixel >> 2) & 3) * 0x55;
             const int16_t b = ((pixel >> 4) & 3) * 0x55;
-            
+
             SDL_SetRenderDrawColor(vga->rend, r, g, b, 255);
 
             const int16_t x = vga->left + (vga->x << 2);
@@ -180,13 +240,16 @@ int main(int argc, char* argv[])
 {
     CpuState currentState;
     VgaState vga = { .x = 0, .y = 0, .left = 0 };
-    
+
     srand(time(NULL));
     garble((void*)ROM, sizeof(ROM));
     garble((void*)RAM, sizeof(RAM));
     garble((void*)&currentState, sizeof(currentState));
-    
+
     FILE* fp = fopen(argv[1], "rb");
+
+	if(!fp)
+		fp = fopen("../clone/gigatron-rom/ROMv6.rom", "rb");
 
     if (!fp)
     {
@@ -196,7 +259,7 @@ int main(int argc, char* argv[])
 
     fread(ROM, 1, sizeof(ROM), fp);
     fclose(fp);
-    
+
     // attempt to initialize graphics and timer system
     if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER) != 0)
     {
@@ -227,12 +290,12 @@ int main(int argc, char* argv[])
     SDL_RenderPresent(vga.rend);
 
     long long t = -2;
-    
+
     while (!quitRequest)
     {
         if (t < 0) currentState.PC = 0;
 
-        CpuState newState = CpuCycle(currentState);
+        CpuState newState = CpuCycleStep(currentState);
 
         currentState = newState;
         t++;
@@ -243,4 +306,14 @@ int main(int argc, char* argv[])
     SDL_DestroyRenderer(vga.rend);
     SDL_DestroyWindow(vga.win);
     SDL_Quit();
+
+	for(unsigned i = 0; i < 256;)
+	{
+		for(unsigned j = 0; j < 8; j++)
+		{
+			printf("0x%02x: 0x%08x, ", i, opcode[i]);
+				i++;
+		}
+		printf("\n");
+	}	
 }

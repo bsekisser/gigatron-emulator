@@ -1,5 +1,6 @@
 #include "input.h"
 #include "sdldraw.h"
+#include "stats.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -15,18 +16,20 @@
 
 typedef struct
 {
-    int16_t x, y, left;
-    uint8_t lineBuffer[WINDOW_HEIGHT][WINDOW_WIDTH];
-    uint8_t oldOutput;
+	int16_t x, y, left;
+	uint8_t lineBuffer[WINDOW_HEIGHT][WINDOW_WIDTH];
+	uint8_t oldOutput;
 //
-    SDL_Renderer* rend;
-    SDL_Window* win;
+	SDL_Renderer* rend;
+	SDL_Window* win;
+//
+	DTime* stats;
 } VgaState;
 
-typedef struct 
+typedef struct
 {
-    uint16_t PC;
-    uint8_t IR, D, AC, X, Y, OUTPUT, undef;
+	uint16_t PC;
+	uint8_t IR, D, AC, X, Y, OUTPUT, undef;
 } CpuState;
 
 uint8_t ROM[1<<16][2];  //1 megabit = 128 kilobyte rom data
@@ -34,213 +37,230 @@ uint8_t RAM[1<<15];     //32 kilobyte of ram data
 uint8_t Input = 0xff;   //input from port, normally high
 
 int quitRequest = 0;
-    
+
 CpuState CpuCycle(const CpuState newState)
 {
-    CpuState oldState = newState;
+	CpuState oldState = newState;
 
-    oldState.IR = ROM[newState.PC][0];
-    oldState.D  = ROM[newState.PC][1];
+	oldState.IR = ROM[newState.PC][0];
+	oldState.D  = ROM[newState.PC][1];
 
-    int ins = newState.IR >> 5;
-    int mod = (newState.IR >> 2) & 7;
-    int bus = newState.IR & 3;
-    int W = (ins == 6);
-    int J = (ins == 7);
+	int ins = newState.IR >> 5;
+	int mod = (newState.IR >> 2) & 7;
+	int bus = newState.IR & 3;
+	int W = (ins == 6);
+	int J = (ins == 7);
 
-    uint8_t lo = newState.D;
-    uint8_t hi = 0;
-    uint8_t* to = NULL;
-    int incX = 0;
+	uint8_t lo = newState.D;
+	uint8_t hi = 0;
+	uint8_t* to = NULL;
+	int incX = 0;
 
-    if(!J)
-        switch (mod)
-        {
-            #define E(p) (W?0:p)
-            case 0: to = E(&oldState.AC); break;
-            case 1: to = E(&oldState.AC); lo = newState.X; break;
-            case 2: to = E(&oldState.AC); hi = newState.Y; break;
-            case 3: to = E(&oldState.AC); lo = newState.X; hi = newState.Y; break;
-            case 4: to = &oldState.X; break;
-            case 5: to = &oldState.Y; break;
-            case 6: to = E(&oldState.OUTPUT); break;
-            case 7: to = E(&oldState.OUTPUT); lo = newState.X; hi = newState.Y; incX = 1; break;
-        }
-    uint16_t addres = (hi << 8) | lo;
+	if(!J)
+		switch (mod)
+		{
+			#define E(p) (W?0:p)
+			case 0: to = E(&oldState.AC); break;
+			case 1: to = E(&oldState.AC); lo = newState.X; break;
+			case 2: to = E(&oldState.AC); hi = newState.Y; break;
+			case 3: to = E(&oldState.AC); lo = newState.X; hi = newState.Y; break;
+			case 4: to = &oldState.X; break;
+			case 5: to = &oldState.Y; break;
+			case 6: to = E(&oldState.OUTPUT); break;
+			case 7: to = E(&oldState.OUTPUT); lo = newState.X; hi = newState.Y; incX = 1; break;
+		}
+	uint16_t addres = (hi << 8) | lo;
 
-    int B = newState.undef; //databus
-    switch (bus)
-    {
-        case 0: B = newState.D; break;
-        case 1: if (!W) B = RAM[addres & 0x7fff]; break;
-        case 2: B = newState.AC; break;
-        case 3: B = Input; break;
-    }
+	int B = newState.undef; //databus
+	switch (bus)
+	{
+		case 0: B = newState.D; break;
+		case 1: if (!W) B = RAM[addres & 0x7fff]; break;
+		case 2: B = newState.AC; break;
+		case 3: B = Input; break;
+	}
 
-    if (W)
-    {
-        RAM[addres & 0x7fff] = B;
-    }
+	if (W)
+	{
+		RAM[addres & 0x7fff] = B;
+	}
 
-    uint8_t ALU; //arithic logic unit
+	uint8_t ALU; //arithic logic unit
 
-    switch (ins)
-    {
-        case 0: ALU = B; break;
-        case 1: ALU = newState.AC & B; break;
-        case 2: ALU = newState.AC | B; break;
-        case 3: ALU = newState.AC ^ B; break;
-        case 4: ALU = newState.AC + B; break;
-        case 5: ALU = newState.AC - B; break;
-        case 6: ALU = newState.AC; break;
-        case 7: ALU = -newState.AC; break;
-    }
+	switch (ins)
+	{
+		case 0: ALU = B; break;
+		case 1: ALU = newState.AC & B; break;
+		case 2: ALU = newState.AC | B; break;
+		case 3: ALU = newState.AC ^ B; break;
+		case 4: ALU = newState.AC + B; break;
+		case 5: ALU = newState.AC - B; break;
+		case 6: ALU = newState.AC; break;
+		case 7: ALU = -newState.AC; break;
+	}
 
-    if (to) *to = ALU;
-    if (incX) oldState.X = newState.X + 1;
+	if (to) *to = ALU;
+	if (incX) oldState.X = newState.X + 1;
 
-    oldState.PC = newState.PC + 1;
+	oldState.PC = newState.PC + 1;
 
-    if (J)
-    {
-        if (mod != 0)
-        {
-            int cond = (newState.AC >> 7) + 2*(newState.AC == 0);
-            if (mod & (1 << cond))
-                oldState.PC = (newState.PC & 0xff00) | B;
-        } else 
-            oldState.PC = (newState.Y << 8) | B;
-    }
-    return oldState;
+	if (J)
+	{
+		if (mod != 0)
+		{
+			int cond = (newState.AC >> 7) + 2*(newState.AC == 0);
+			if (mod & (1 << cond))
+				oldState.PC = (newState.PC & 0xff00) | B;
+		} else
+			oldState.PC = (newState.Y << 8) | B;
+	}
+	return oldState;
 }
 
 void garble(uint8_t mem[], unsigned int length)
 {
-    for (unsigned int i = 0; i < length; i++)
-    {
-        mem[i] = rand();
-    }
+	for (unsigned int i = 0; i < length; i++)
+	{
+		mem[i] = rand();
+	}
 }
 
 void VgaCycle(VgaState *const vga, CpuState *const currentState)
 {
-    const uint8_t output = currentState->OUTPUT;
-    const uint8_t oldOutput = vga->oldOutput;
-    vga->oldOutput = output;
-    
-    uint8_t *const linePixel = &vga->lineBuffer[vga->y][vga->x++];
-    const uint8_t pixel = output & 63;
-    
-    int hSync = (output & 0x40) - (oldOutput & 0x40);
-    int vSync = (output & 0x80) - (oldOutput & 0x80);
+	DTime *const stats = vga->stats;
+	
+	const uint8_t output = currentState->OUTPUT;
+	const uint8_t oldOutput = vga->oldOutput;
+	vga->oldOutput = output;
 
-    if (hSync > 0)
-    {
-        vga->left = vga->x >> 1;
+	uint8_t *const linePixel = &vga->lineBuffer[vga->y][vga->x++];
+	const uint8_t pixel = output & 63;
 
-        vga->x = 0;
-        vga->y++;
+	const int hSync = (output & 0x40) - (oldOutput & 0x40);
+	const int vSync = (output & 0x80) - (oldOutput & 0x80);
 
-        currentState->undef = rand() & 0xff;
-    }
+	if (hSync > 0)
+	{
+		vga->left = vga->x >> 1;
 
-    if (vSync < 0 )
-    {
-        vga->y = 0;
+		vga->x = 0;
+		vga->y++;
 
-        quitRequest = GetQuitRequest();
-        Input = GetInput(Input);
-        DrawGigatronExtendedIO(vga->rend, Input);
+		currentState->undef = rand() & 0xff;
+	}
 
-        SDL_RenderPresent(vga->rend);
-    }
+	if (vSync < 0 )
+	{
+		vga->y = 0;
 
-    if ((0 < vga->y) && (WINDOW_HEIGHT > vga->y)
-        && ((0 < vga->x) && (WINDOW_WIDTH > vga->x)))
-    {
-        if(pixel != linePixel[0])
-        {
-            *linePixel = pixel;
+		_stats_frame_end_render_start(stats);
 
-            const int16_t r = (pixel & 3) * 0x55;
-            const int16_t g = ((pixel >> 2) & 3) * 0x55;
-            const int16_t b = ((pixel >> 4) & 3) * 0x55;
-            
-            SDL_SetRenderDrawColor(vga->rend, r, g, b, 255);
+		quitRequest = GetQuitRequest();
+		Input = GetInput(Input);
+		DrawGigatronExtendedIO(vga->rend, Input);
 
-            const int16_t x = vga->left + (vga->x << 2);
-            const int16_t y = vga->y;
+		SDL_RenderPresent(vga->rend);
 
-            SDL_RenderDrawLine(vga->rend, x, y, x + 4, y);
-        }
-    }
+		render_end(stats);
+	}
+
+	if ((0 < vga->y) && (WINDOW_HEIGHT > vga->y)
+		&& ((0 < vga->x) && (WINDOW_WIDTH > vga->x)))
+	{
+		if(pixel != linePixel[0])
+		{
+			*linePixel = pixel;
+
+			const int16_t r = (pixel & 3) * 0x55;
+			const int16_t g = ((pixel >> 2) & 3) * 0x55;
+			const int16_t b = ((pixel >> 4) & 3) * 0x55;
+
+			SDL_SetRenderDrawColor(vga->rend, r, g, b, 255);
+
+			const int16_t x = vga->left + (vga->x << 2);
+			const int16_t y = vga->y;
+
+			SDL_RenderDrawLine(vga->rend, x, y, x + 4, y);
+		}
+	}
 }
 
 int main(int argc, char* argv[])
 {
-    CpuState currentState;
-    VgaState vga = { .x = 0, .y = 0, .left = 0 };
-    
-    srand(time(NULL));
-    garble((void*)ROM, sizeof(ROM));
-    garble((void*)RAM, sizeof(RAM));
-    garble((void*)&currentState, sizeof(currentState));
-    
-    FILE* fp = fopen(argv[1], "rb");
+	CpuState currentState;
+	VgaState vga = { .x = 0, .y = 0, .left = 0 };
+	DTime stats;
 
-    if (!fp)
-    {
-        fprintf(stderr, "Failed to open ROM-file\n");
-        exit(EXIT_FAILURE);
-    }
+	vga.stats = &stats;
 
-    fread(ROM, 1, sizeof(ROM), fp);
-    fclose(fp);
-    
-    // attempt to initialize graphics and timer system
-    if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER) != 0)
-    {
-        printf("error initializing SDL: %s\n", SDL_GetError());
-        return 1;
-    }
+	srand(time(NULL));
+	garble((void*)ROM, sizeof(ROM));
+	garble((void*)RAM, sizeof(RAM));
+	garble((void*)&currentState, sizeof(currentState));
 
-    vga.win = SDL_CreateWindow("Jalecko's Gigatron Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT,0);
+	FILE* fp = fopen(argv[1], "rb");
 
-    if (!vga.win)
-    {
-        printf("error creating window: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
+	if(!fp)
+		fp = fopen("../clone/gigatron-rom/ROMv6.rom", "rb");
 
-    // create a renderer, which sets up the graphics hardware
-    Uint32 render_flags = SDL_RENDERER_ACCELERATED;
-    vga.rend = SDL_CreateRenderer(vga.win, -1, render_flags);
-    if (!vga.rend)
-    {
-        printf("error creating renderer: %s\n", SDL_GetError());
-        SDL_DestroyWindow(vga.win);
-        SDL_Quit();
-        return 1;
-    }
+	if (!fp)
+	{
+		fprintf(stderr, "Failed to open ROM-file\n");
+		exit(EXIT_FAILURE);
+	}
 
-    SDL_RenderPresent(vga.rend);
+	fread(ROM, 1, sizeof(ROM), fp);
+	fclose(fp);
 
-    long long t = -2;
-    
-    while (!quitRequest)
-    {
-        if (t < 0) currentState.PC = 0;
+	// attempt to initialize graphics and timer system
+	if (SDL_Init(SDL_INIT_VIDEO|SDL_INIT_TIMER) != 0)
+	{
+		printf("error initializing SDL: %s\n", SDL_GetError());
+		return 1;
+	}
 
-        CpuState newState = CpuCycle(currentState);
+	vga.win = SDL_CreateWindow("Jalecko's Gigatron Emulator", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, WINDOW_WIDTH, WINDOW_HEIGHT,0);
 
-        currentState = newState;
-        t++;
+	if (!vga.win)
+	{
+		printf("error creating window: %s\n", SDL_GetError());
+		SDL_Quit();
+		return 1;
+	}
 
-        VgaCycle(&vga, &newState);
-    }
+	// create a renderer, which sets up the graphics hardware
+	Uint32 render_flags = SDL_RENDERER_ACCELERATED;
+	vga.rend = SDL_CreateRenderer(vga.win, -1, render_flags);
+	if (!vga.rend)
+	{
+		printf("error creating renderer: %s\n", SDL_GetError());
+		SDL_DestroyWindow(vga.win);
+		SDL_Quit();
+		return 1;
+	}
 
-    SDL_DestroyRenderer(vga.rend);
-    SDL_DestroyWindow(vga.win);
-    SDL_Quit();
+	SDL_RenderPresent(vga.rend);
+
+	stats.t = -2;
+
+	stats_init(&stats);
+
+	_stats_frame_start(&stats);
+
+	while (!quitRequest)
+	{
+		if (stats.t < 0) currentState.PC = 0;
+
+		CpuState newState = CpuCycle(currentState);
+		VgaCycle(&vga, &currentState);
+
+		currentState = newState;
+		stats.t++;
+	}
+
+	putchar('\n');
+
+	SDL_DestroyRenderer(vga.rend);
+	SDL_DestroyWindow(vga.win);
+	SDL_Quit();
 }

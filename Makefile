@@ -1,10 +1,12 @@
 # A simple Makefile for compiling small SDL projects
 
 # set the compiler
-CC := clang
+#CC := clang
 
 # add header files here
 HDRS := $(*.h)
+
+LDLIBS = -L../libbse -lbse
 
 # add source files here
 SRCS := emulator.c input.c sdldraw.c
@@ -17,13 +19,14 @@ EXEC := emulate
 
 # set the compiler flags
 CFLAGS := `sdl2-config --libs --cflags` -ggdb3 -O2 -march=native --std=c99 -Wall -lSDL2_image -lSDL2_ttf -lm
+CFLAGS += -MMD -MP
 
 # default recipe
 all: $(EXEC)
 
 # recipe for building the final executable
 $(EXEC): $(OBJS) $(HDRS) Makefile
-	$(CC) -o $@ $(OBJS) $(CFLAGS)
+	$(CC) -o $@ $(OBJS) $(CFLAGS) $(LDLIBS)
 
 # recipe for building object files
 #$(OBJS): $(@:.o=.c) $(HDRS) Makefile
@@ -31,6 +34,8 @@ $(EXEC): $(OBJS) $(HDRS) Makefile
 
 # recipe to clean the workspace
 clean:
-	rm -f $(EXEC) $(OBJS)
+	rm -f $(EXEC) $(OBJS) *.d
 
 .PHONY: all clean
+
+-include *.d

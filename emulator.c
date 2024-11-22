@@ -38,12 +38,10 @@ uint8_t Input = 0xff;   //input from port, normally high
 
 int quitRequest = 0;
 
-CpuState CpuCycle(const CpuState newState)
+void CpuCycle(const CpuState newState, CpuState *const oldState)
 {
-	CpuState oldState = newState;
-
-	oldState.IR = ROM[newState.PC][0];
-	oldState.D  = ROM[newState.PC][1];
+	oldState->IR = ROM[newState.PC][0];
+	oldState->D  = ROM[newState.PC][1];
 
 	int ins = newState.IR >> 5;
 	int mod = (newState.IR >> 2) & 7;
@@ -60,14 +58,14 @@ CpuState CpuCycle(const CpuState newState)
 		switch (mod)
 		{
 			#define E(p) (W?0:p)
-			case 0: to = E(&oldState.AC); break;
-			case 1: to = E(&oldState.AC); lo = newState.X; break;
-			case 2: to = E(&oldState.AC); hi = newState.Y; break;
-			case 3: to = E(&oldState.AC); lo = newState.X; hi = newState.Y; break;
-			case 4: to = &oldState.X; break;
-			case 5: to = &oldState.Y; break;
-			case 6: to = E(&oldState.OUTPUT); break;
-			case 7: to = E(&oldState.OUTPUT); lo = newState.X; hi = newState.Y; incX = 1; break;
+			case 0: to = E(&oldState->AC); break;
+			case 1: to = E(&oldState->AC); lo = newState.X; break;
+			case 2: to = E(&oldState->AC); hi = newState.Y; break;
+			case 3: to = E(&oldState->AC); lo = newState.X; hi = newState.Y; break;
+			case 4: to = &oldState->X; break;
+			case 5: to = &oldState->Y; break;
+			case 6: to = E(&oldState->OUTPUT); break;
+			case 7: to = E(&oldState->OUTPUT); lo = newState.X; hi = newState.Y; incX = 1; break;
 		}
 	uint16_t addres = (hi << 8) | lo;
 
@@ -100,9 +98,9 @@ CpuState CpuCycle(const CpuState newState)
 	}
 
 	if (to) *to = ALU;
-	if (incX) oldState.X = newState.X + 1;
+	if (incX) oldState->X = newState.X + 1;
 
-	oldState.PC = newState.PC + 1;
+	oldState->PC = newState.PC + 1;
 
 	if (J)
 	{
@@ -110,11 +108,10 @@ CpuState CpuCycle(const CpuState newState)
 		{
 			int cond = (newState.AC >> 7) + 2*(newState.AC == 0);
 			if (mod & (1 << cond))
-				oldState.PC = (newState.PC & 0xff00) | B;
+				oldState->PC = (newState.PC & 0xff00) | B;
 		} else
-			oldState.PC = (newState.Y << 8) | B;
+			oldState->PC = (newState.Y << 8) | B;
 	}
-	return oldState;
 }
 
 void garble(uint8_t mem[], unsigned int length)
@@ -251,10 +248,9 @@ int main(int argc, char* argv[])
 	{
 		if (stats.t < 0) currentState.PC = 0;
 
-		CpuState newState = CpuCycle(currentState);
+		CpuCycle(currentState, &currentState);
 		VgaCycle(&vga, &currentState);
 
-		currentState = newState;
 		stats.t++;
 	}
 

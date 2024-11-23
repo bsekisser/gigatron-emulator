@@ -114,6 +114,16 @@ void CpuCycle(const CpuState newState, CpuState *const oldState)
 	}
 }
 
+uint8_t CpuCycleStep(CpuState *const cpuState, DTime *const stats)
+{
+	if (stats->t < 0) cpuState->PC = 0;
+
+	CpuCycle(*cpuState, cpuState);
+	stats->t++;
+	
+	return(cpuState->OUTPUT);
+}
+
 void garble(uint8_t mem[], unsigned int length)
 {
 	for (unsigned int i = 0; i < length; i++)
@@ -122,11 +132,10 @@ void garble(uint8_t mem[], unsigned int length)
 	}
 }
 
-void VgaCycle(VgaState *const vga, CpuState *const currentState)
+void VgaCycle(VgaState *const vga, CpuState *const currentState, uint8_t output)
 {
 	DTime *const stats = vga->stats;
 	
-	const uint8_t output = currentState->OUTPUT;
 	const uint8_t oldOutput = vga->oldOutput;
 	vga->oldOutput = output;
 
@@ -246,12 +255,8 @@ int main(int argc, char* argv[])
 
 	while (!quitRequest)
 	{
-		if (stats.t < 0) currentState.PC = 0;
-
-		CpuCycle(currentState, &currentState);
-		VgaCycle(&vga, &currentState);
-
-		stats.t++;
+		const uint8_t output = CpuCycleStep(&currentState, &stats);
+		VgaCycle(&vga, &currentState, output);
 	}
 
 	putchar('\n');
